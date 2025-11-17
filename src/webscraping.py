@@ -5,6 +5,7 @@ import time
 import random
 
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 
 def get_headers():
     """Returns standard browser headers to mimic human requests."""
@@ -25,35 +26,34 @@ def get_rss(url, headers=None, max_retries=5):
     for attempt in range(1, max_retries + 1):
         try:
             print(f"Attempt {attempt} to fetch RSS feed from {url}")
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()  # Raise an error for bad responses
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
             link = [a.get('href') for a in soup.find_all('a', href=True) if ('feed' in a.get('href')) or ('rss' in a.get('href'))]
 
             if not link:
-                link = [l.get('href') for l in soup.find_all('link', href=True) if ('feed' in l.get('href')) or ('rss' in l.get('href'))]
-
-            if not link:
-                for l in soup.find_all('link', href=True):
-                    if '/api' in l.get('rel')[0]:
-                        link.append(l.get('href'))
+                link = [l.get('href') for l in soup.find_all('link', href=True) if 
+                                                                    ('feed' in l.get('href')) or 
+                                                                    ('rss' in l.get('href')) or 
+                                                                    ('/api' in l.get('rel')[0])
+                                                                    ]
 
             if not link: 
-                time.sleep(2)
+                time.sleep(random.uniform(1, 3))
                 return None
             if 'https' not in link[0]:
-                time.sleep(2)
-                rss = url + link[0]
+                time.sleep(random.uniform(1, 3))
+                rss = urljoin(url, link[0])
             else:
                 rss = link[0]
             
-            response2 = requests.get(rss, headers=headers)
+            response2 = requests.get(rss, headers=headers, timeout=10)
             response2.raise_for_status()
 
             time.sleep(2)
-            return (rss, response2.content)
+            return response2.content
         except requests.RequestException as e:
             print(f"An error occurred: {e}")
             if attempt == max_retries:
@@ -80,32 +80,49 @@ def xml_to_df(xml_content):
     content = []
 
     for i in soup.find_all('item'):
-        title_tag = i.find('title').text
-        title.append(title_tag if title_tag is not None else '')
+        title_tag = i.find('title')
+        title.append(title_tag.get_text(strip=True) if title_tag else '')
+
         cat = [c.text for c in i.find_all('category')]
         category.append(', '.join(cat))
 
-        author_tag = soup.find('author')
+        author_tag = i.find('author')
         author.append(author_tag.get_text(strip=True) if author_tag else None)
 
-        pub_tag = soup.find('pubDate')
+        pub_tag = i.find('pubDate')
         pubdate.append(pub_tag.get_text(strip=True) if pub_tag else None)
 
-        guid_tag = soup.find('guid')
+        guid_tag = i.find('guid')
         guid.append(guid_tag.get_text(strip=True) if guid_tag else None)
 
-        link_tag = soup.find('link')
+        link_tag = i.find('link')
         link.append(link_tag.get_text(strip=True) if link_tag else None)
 
-        if i.find('description') is not None:
-            description_soup = BeautifulSoup(i.find('description').text, 'html.parser')
-        description.append(description_soup.get_text(" ", strip=True) if i.find('description') is not None else '')
+        desc_tag = i.find('description')
+        if desc_tag:
+            description_soup = BeautifulSoup(desc_tag.text, 'html.parser')
+            description.append(description_soup.get_text(" ", strip=True))
+        else:
+            description.append('')
 
-        if i.find('content:encoded') is not None:
-            content_soup = BeautifulSoup(i.find('content:encoded').text, 'html.parser')
-        content.append(content_soup.get_text(" ", strip=True) if i.find('content:encoded') is not None else '')
+        content_tag = i.find('content:encoded')
+        if content_tag is not None:
+            content_soup = BeautifulSoup(content_tag.text, 'html.parser')
+            content.append(content_soup.get_text(" ", strip=True))
+        else:
+            content.append('')
 
-    table = pd.DataFrame([title, category, author, pubdate, guid, link, description, content]).T
-    table.columns = ['title', 'category', 'author', 'pubdate', 'guid', 'link', 'description', 'content']
+    table = pd.DataFrame(
+        {
+            "title": title,
+            "category": category,
+            "author": author,
+            "pubdate": pubdate,
+            "guid": guid,
+            "link": link,
+            "description": description,
+            "content": content,
+        }
+    )
 
     return table
